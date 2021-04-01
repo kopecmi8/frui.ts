@@ -1,5 +1,6 @@
 # `@frui.ts/screens`
 
+
 # Screens
 
 Since the application should be **ViewModel-driven**, we need to properly design the application structure within VMs.
@@ -21,32 +22,167 @@ These components are heavily inspired by the Caliburn.Micro framework from .NET 
 ![Classes hierarchy](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/eManPrague/frui.ts/develop/packages/screens/classes.puml)
 
 ## `ScreenBase`
+- it`s a simple base class for all Screens
 
-### Useful functionality
+### Screen lifecycle
+- ScreenBase define lifecycle methods `onInitialize()`, `onActivate()`, `onDeactivate()`
+- override these functions in derived class if you need to react to the respective events. If overriding in conductors, don't forget to call the function from base class (`super`) as well.
 
-- `navigationName` - name used for navigation path (URL)
+ 
+##### onInitialize
+- triggered once, when Screen is first used
+- best place to register reactions, subscribe eventBus, fetch data
 
+```
+protected onInitialize(): Promise<any> | void {}
+```
+
+##### onActivate
+- triggered every time when Screen appears on device screen
+- best place to wake up UI subscribtions  - scroll events etc.
+
+```
+protected onActivate(): Promise<any> | void {}
+```
+
+##### onDeactivate
+- triggered every time when Screen disappear from device screen
+- `isClosing` flag determine if deactivation is temporary or not
+- best place to clean your mess - unregister reaction handlers, unsubscribe from eventBus, deallocate useless objects
+
+```
+protected onDeactivate(isClosing: boolean): Promise<any> | void {}
+```
+
+### Active screen
+- Screen is active when is displayed on real device screen
+- otherwise it could live in browser memory
 - `isActive` - observable property indicating whether the screen is currently active/visible in the application
-- `onInitialize()`, `onActivate()`, `onDeactivate()` - override these functions in derived class if you need to react to the respective events. If overriding in conductors, don't forget to call the function from base class (`super`) as well.
 
-- `canDeactivate()` - use this function in views to enable/disable close button. You can override this function and implement custom logic. Conductors override this function and forward it to `canDeactivate()` from their children.
+```typescript
+@observable protected isActiveValue = false;
+
+@computed get isActive() {
+ return this.isActiveValue;
+}
+```
+
+### Screen deactivation
+- screen can be deactivated at any time by default
+- `canDeactivate()` - use this function in views to enable/disable close button. 
+- You can override this function and implement custom logic. For example to prevent deactivation when data are processed to server
+- Conductors override this function and forward it to `canDeactivate()` from their children.
+
+```typescript
+canDeactivate(isClosing: boolean): Promise<boolean> | boolean {
+ return true;
+}
+```
+
+
 - `requestClose()` - use this function to ask the screen's parent to close the screen.
-
-#### Example
+##### Example
 
 ```html
 <button disabled="{!vm.canDeactivate()}" onClick="{vm.requestClose}">Close</button>
 ```
 
-## `ConductorSingleChild`
 
-### Useful functionality
+### Screen name and navigation name
+- screen could have specified `name` human readable name for specific screen. It could be used for navigation links and headings. 
+- `navigationName` - name used for navigation path (URL)
 
-- `activeChild` - observable property with the currently selected child
+##### Example
+```typescript
+export default class MyScreen extends ScreenBase {
+  constuctor() {
+     super();
+     this.navigationName = "my-screen";
+     this.nameValue = "My screen";
+  }
+}
+```
+
+## `ConductorBase`
+- base abstract class to create screen hierarchy
+
+
+### Parent - child concept
+- Conductor is a parent for children screen parts
+##### ConductorBase
+```typescript
+protected connectChild(item: TChild | undefined) {
+    if (item) {
+        item.parent = this;
+    }
+}
+```  
+
+##### ScreenBase
+```typescript
+parent: IConductor<ScreenBase>;
+```  
+
+#### Child activation and deactivation
 - `tryActivateChild(child)` - call this function to change the currently selected child. Automatically closes the old child if possible (calls `canDeactivate` on the child) and assigns `parent` to the new one.
 - `closeChild(child)` - use to properly close the child (calls `canDeactivate`)
-- `findNavigationChild(navigationName)` - implement this function to return proper child view model based on the navigation name provided. It is automatically called when navigating. However, you can reuse it in your logic as well (e.g., when creating a child for `tryActivateChild`).
+- child closing can be forces via set `forceClose` flag to `true` 
+
+##### ScreenBase
+```typescript
+requestClose(): Promise<boolean> | boolean {
+    return this.parent?.closeChild(this) ?? false;
+}
+```  
+
+##### ConductorBase
+```typescript
+closeChild(child: TChild, forceClose = false): Promise<boolean> | boolean {
+    return forceClose ? this.deactivateChild(child, true).then(() => true) : this.tryDeactivateChild(child, true);
+}
+
+```  
+
+
+## `ConductorSingleChild`
+- use if there is no finite list of children that the user might choose from such as ad-hoc opened children
+- in contrast to `ConductorOneChildActive` there is no children array which contains pointers to children screens
+- children might be typically created by factory
+
+### Child navigation `findNavigationChild(navigationName)` 
+- there is no default implementation of findNavigationChild method
+- implement this function to return proper child view model based on the navigation name provided. It is automatically called when navigating. However, you can reuse it in your logic as well (e.g., when creating a child for `tryActivateChild`).
+
+##### Example
+````typescript
+protected findNavigationChild(navigationName: string | undefined): Promise<TChild | undefined> | TChild | undefined {
+    if (navigationName) {
+        return this.myChildScreenFactory(navigatioName);
+    }  
+   
+    return undefined;
+}
+````
+
 - `onChildNavigated(child)` - implement this function to do some actions after navigation is done
+
+### `activeChild`
+- observable property with the currently selected child
+
+##### Example usage at View
+````tsx
+const ExampleView: ViewComponent<ExampleViewModel> = observer(({ vm }) => {
+  if (vm.activeChild) {
+    return <Observer>{() => <View vm={vm.activeChild} />}</Observer>;
+  }
+
+  return (
+    <>
+      <h1>Conductor content</h1>
+    </>
+  );
+});
+````
 
 ## `ConductorOneChildActive`
 
